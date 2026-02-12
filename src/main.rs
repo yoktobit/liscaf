@@ -20,7 +20,7 @@ struct Args {
     /// New project name (used to replace template tokens)
     new_name: String,
 
-    /// GitHub repo URL (HTTPS). Example: https://github.com/owner/repo
+    /// Git repo URL (HTTPS or SSH). Examples: https://github.com/owner/repo or git@github.com:owner/repo.git
     repo_url: Option<String>,
     /// If set, show planned changes but don't write files or initialize git
     #[arg(long)]
@@ -51,15 +51,15 @@ fn main() -> anyhow::Result<()> {
         if assume_yes {
             anyhow::bail!("repo URL must be provided when running non-interactively");
         }
-        repo_url = Text::new("Enter repository HTTPS URL:")
-            .with_placeholder("https://github.com/owner/repo")
+        repo_url = Text::new("Enter repository URL (HTTPS or SSH):")
+            .with_placeholder("https://github.com/owner/repo or git@github.com:owner/repo.git")
             .prompt()?;
     } else if !assume_yes {
         if !Confirm::new(&format!("Use repo URL '{}' ?", repo_url))
             .with_default(true)
             .prompt()? {
-            repo_url = Text::new("Enter repository HTTPS URL:")
-                .with_placeholder("https://github.com/owner/repo")
+            repo_url = Text::new("Enter repository URL (HTTPS or SSH):")
+                .with_placeholder("https://github.com/owner/repo or git@github.com:owner/repo.git")
                 .prompt()?;
         }
     }
@@ -95,8 +95,8 @@ fn run_scaffold(repo_url: &str, new_name: &str, template_base: &str, dry_run: bo
     println!("Starting scaffolding for '{}'", new_name);
     println!("Repo URL: {}", repo_url);
 
-    if !repo_url.starts_with("https://") {
-        anyhow::bail!("Repo URL must start with https://");
+    if !is_supported_repo_url(repo_url) {
+        anyhow::bail!("Repo URL must be HTTPS, SSH (ssh://), or SCP-like (git@host:owner/repo.git)");
     }
 
     // Create a temporary directory
@@ -193,6 +193,18 @@ fn run_scaffold(repo_url: &str, new_name: &str, template_base: &str, dry_run: bo
     }
 
     Ok(())
+}
+
+fn is_supported_repo_url(repo_url: &str) -> bool {
+    let lowered = repo_url.to_lowercase();
+    if lowered.starts_with("https://") || lowered.starts_with("http://") {
+        return true;
+    }
+    if lowered.starts_with("ssh://") {
+        return true;
+    }
+    // SCP-like syntax: user@host:owner/repo(.git)
+    repo_url.contains('@') && repo_url.contains(':')
 }
 
 /// Splits an arbitrary name like "my-cool_app" or "MyCoolApp" into tokens: ["my","cool","app"]
