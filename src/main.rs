@@ -2,6 +2,7 @@
 //!
 //! Usage:
 //!   liscaf <new-project-name> [repo-url]
+//!   liscaf just <recipe>
 //!
 //! Templates can be selected from a repositories.txt list by providing a
 //! templates source (folder, repo, or http base URL).
@@ -12,7 +13,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use convert_case::{Case, Casing};
 use inquire::{Confirm, Select, Text};
 use similar::{ChangeTag, TextDiff};
@@ -22,6 +23,20 @@ use walkdir::WalkDir;
 #[derive(Parser, Debug)]
 #[command(name = "liscaf", about = "Simple scaffolder using inquire")]
 struct Args {
+    #[command(subcommand)]
+    command: CliCommand,
+}
+
+#[derive(Subcommand, Debug)]
+enum CliCommand {
+    /// Scaffold a new project from a template repo
+    Scaffold(ScaffoldArgs),
+    /// Run a just recipe in the current directory
+    Just(JustArgs),
+}
+
+#[derive(Parser, Debug)]
+struct ScaffoldArgs {
     /// New project name (used to replace template tokens)
     new_name: String,
 
@@ -46,14 +61,35 @@ struct Args {
     into: Option<PathBuf>,
 }
 
+#[derive(Parser, Debug)]
+struct JustArgs {
+    /// Recipe to run
+    recipe: String,
+    /// Working directory to search for justfiles
+    #[arg(long = "path", value_name = "PATH")]
+    path: Option<PathBuf>,
+    /// Assume yes to prompts (non-interactive)
+    #[arg(short = 'y', long = "yes")]
+    yes: bool,
+}
+
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
+    match args.command {
+        CliCommand::Scaffold(scaffold_args) => run_scaffold_command(scaffold_args)?,
+        CliCommand::Just(just_args) => run_just_command(just_args)?,
+    }
+
+    Ok(())
+}
+
+fn run_scaffold_command(args: ScaffoldArgs) -> anyhow::Result<()> {
     // Ask interactively whether to keep or edit the provided values (skip if --yes)
     let assume_yes = args.yes;
     let mut new_name = args.new_name;
     if !assume_yes {
-        if !Confirm::new(&format!("Use new project name '{}'?", new_name))
+        if !Confirm::new(&format!("Use new project name '{}' ?", new_name))
             .with_default(true)
             .prompt()? {
             new_name = Text::new("Enter new project name:")
@@ -123,6 +159,46 @@ fn main() -> anyhow::Result<()> {
     )?;
 
     Ok(())
+}
+
+fn run_just_command(args: JustArgs) -> anyhow::Result<()> {
+    let assume_yes = args.yes;
+    let root = match args.path {
+        Some(path) => path,
+        None => std::env::current_dir()?,
+    };
+
+    let mut justfiles = find_justfiles_in_root(&root)?;
+    if justfiles.is_empty() {
+        anyhow::bail!("No justfile found in {}", root.display());
+    }
+
+    let chosen = if justfiles.len() == 1 {
+        justfiles.remove(0)
+    } else if assume_yes {
+        justfiles.remove(0)
+    } else {
+        let options: Vec<String> = justfiles
+            .iter()
+            .map(|p| p.file_name().and_then(|s| s.to_str()).unwrap_or("justfile").to_string())
+            .collect();
+        let choice = Select::new("Choose a justfile:", options).prompt()?;
+        let idx = justfiles
+            .iter()
+            .position(|p| p.file_name().and_then(|s| s.to_str()) == Some(choice.as_str()))
+            .unwrap_or(0);
+        justfiles.remove(idx)
+    };
+
+    if !assume_yes {
+        let prompt = format!("Run just recipe '{}' from '{}' ?", args.recipe, chosen.display());
+        if !Confirm::new(&prompt).with_default(true).prompt()? {
+            println!("Aborted by user.");
+            return Ok(());
+        }
+    }
+
+    run_just_recipe(&chosen, &root, &args.recipe)
 }
 
 fn merge_into_dest(src: &Path, dest: &Path, dry_run: bool) -> anyhow::Result<()> {
