@@ -14,6 +14,7 @@ use std::process::{Command, Stdio};
 use clap::Parser;
 use convert_case::{Case, Casing};
 use inquire::{Confirm, Select, Text};
+use similar::{ChangeTag, TextDiff};
 use walkdir::WalkDir;
 
 /// Simple scaffolder: clones a repo, replaces template tokens, and initializes a new git repo.
@@ -173,10 +174,7 @@ fn merge_into_dest(src: &Path, dest: &Path, dry_run: bool) -> anyhow::Result<()>
 
         match (src_text, dest_text) {
             (Some(incoming), Some(existing)) => {
-                let merged = format!(
-                    "<<<<<<< EXISTING\n{}\n=======\n{}\n>>>>>>> TEMPLATE\n",
-                    existing, incoming
-                );
+                let merged = merge_text_with_conflicts(&existing, &incoming);
                 if dry_run {
                     println!("DRY MERGE: {}", dest_path.display());
                 } else {
@@ -221,6 +219,40 @@ fn bytes_to_text(bytes: &[u8]) -> Option<String> {
         return None;
     }
     String::from_utf8(bytes.to_vec()).ok()
+}
+
+fn merge_text_with_conflicts(existing: &str, incoming: &str) -> String {
+    let diff = TextDiff::from_lines(existing, incoming);
+    let mut out = String::new();
+    let mut left = String::new();
+    let mut right = String::new();
+
+    let flush_conflict = |out: &mut String, left: &mut String, right: &mut String| {
+        if left.is_empty() && right.is_empty() {
+            return;
+        }
+        out.push_str("<<<<<<< EXISTING\n");
+        out.push_str(left);
+        out.push_str("=======\n");
+        out.push_str(right);
+        out.push_str(">>>>>>> TEMPLATE\n");
+        left.clear();
+        right.clear();
+    };
+
+    for change in diff.iter_all_changes() {
+        match change.tag() {
+            ChangeTag::Equal => {
+                flush_conflict(&mut out, &mut left, &mut right);
+                out.push_str(change.value());
+            }
+            ChangeTag::Delete => left.push_str(change.value()),
+            ChangeTag::Insert => right.push_str(change.value()),
+        }
+    }
+
+    flush_conflict(&mut out, &mut left, &mut right);
+    out
 }
 
 fn unique_suffixed_path(base: &Path, suffix: &str) -> PathBuf {
