@@ -26,6 +26,12 @@ Examples:
 cargo run -- my-cool-app https://github.com/owner/acme-app
 ```
 
+Merge into an existing directory (adds new files, marks conflicts with git-style markers):
+
+```bash
+cargo run -- my-cool-app https://github.com/owner/acme-app --into /path/to/existing/project
+```
+
 Interactive prompts
 
 If you pass values on the CLI the program will ask you to confirm and optionally edit them using interactive prompts.
@@ -49,3 +55,4 @@ cargo run -- my-cool-app https://github.com/owner/acme-app --yes
 Notes
 - The tool removes the cloned repository's `.git` directory to unlink from the original repository before making changes, and then initializes a new repo (unless `--dry-run` is used).
 - The tool performs simple textual replacements (heuristic: skips binary files).
+- When using `--into`, files are merged into the destination folder. If a file already exists and differs, a conflict is written using git-style markers. Binary conflicts are saved as a separate `.liscaf-incoming` file with a `.liscaf-conflict` note.
