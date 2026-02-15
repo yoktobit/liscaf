@@ -6,6 +6,7 @@
 //! Templates can be selected from a repositories.txt list by providing a
 //! templates source (folder, repo, or http base URL).
 //!
+use std::ffi::OsString;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -118,6 +119,7 @@ fn main() -> anyhow::Result<()> {
         &template_base,
         dry_run,
         args.into.as_deref(),
+        assume_yes,
     )?;
 
     Ok(())
@@ -280,6 +282,7 @@ fn run_scaffold(
     template_base: &str,
     dry_run: bool,
     into_dir: Option<&Path>,
+    assume_yes: bool,
 ) -> anyhow::Result<()> {
     println!("Starting scaffolding for '{}'", new_name);
     println!("Repo URL: {}", repo_url);
@@ -354,6 +357,7 @@ fn run_scaffold(
             println!("Dry run: skipping merge write.");
         } else {
             println!("Merge finished");
+            run_justfiles_for_root(dest_dir, dry_run, assume_yes)?;
         }
         return Ok(());
     }
@@ -386,14 +390,18 @@ fn run_scaffold(
 
         // Move temp dir to destination
         let dest = std::env::current_dir()?.join(new_name);
-        if dest.exists() {
+        let final_dest = if dest.exists() {
             let dest_alt = std::env::current_dir()?.join(format!("{}_from_template", new_name));
             fs::rename(&tmp_path, &dest_alt)?;
             println!("Wrote scaffold into {}", dest_alt.display());
+            dest_alt
         } else {
             fs::rename(&tmp_path, &dest)?;
             println!("Wrote scaffold into {}", dest.display());
-        }
+            dest
+        };
+
+        run_justfiles_for_root(&final_dest, dry_run, assume_yes)?;
 
         println!("Scaffolding finished");
     }
@@ -573,6 +581,105 @@ fn parse_template_line(line: &str) -> (String, String) {
         }
     }
     (line.to_string(), line.to_string())
+}
+
+fn run_justfiles_for_root(
+    root: &Path,
+    dry_run: bool,
+    assume_yes: bool,
+) -> anyhow::Result<()> {
+    if dry_run {
+        println!("Dry run: skipping justfile execution.");
+        return Ok(());
+    }
+
+    let justfiles = find_justfiles_in_root(root)?;
+    if justfiles.is_empty() {
+        return Ok(());
+    }
+
+    for justfile in justfiles {
+        if !justfile_has_recipe(&justfile, "liscaf-merge")? {
+            continue;
+        }
+
+        if assume_yes {
+            println!(
+                "Skipping justfile '{}' because confirmation is required",
+                justfile.display()
+            );
+            continue;
+        }
+
+        let prompt = format!(
+            "Run just recipe 'liscaf-merge' from '{}' ?",
+            justfile.display()
+        );
+        if Confirm::new(&prompt).with_default(false).prompt()? {
+            run_just_recipe(&justfile, root, "liscaf-merge")?;
+        }
+    }
+
+    Ok(())
+}
+
+fn find_justfiles_in_root(root: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let file_name = match path.file_name().and_then(|s| s.to_str()) {
+            Some(name) => name,
+            None => continue,
+        };
+        if file_name.starts_with("justfile") {
+            files.push(path);
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+fn justfile_has_recipe(path: &Path, recipe: &str) -> anyhow::Result<bool> {
+    let content = fs::read_to_string(path)?;
+    for line in content.lines() {
+        let mut trimmed = line.trim_start();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some(idx) = trimmed.find('#') {
+            trimmed = &trimmed[..idx];
+        }
+        if trimmed.contains(":=") {
+            continue;
+        }
+        if trimmed.starts_with(recipe) {
+            let rest = &trimmed[recipe.len()..];
+            if (rest.starts_with(':') || rest.starts_with(' ') || rest.starts_with('\t'))
+                && trimmed.contains(':')
+            {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn run_just_recipe(justfile: &Path, working_dir: &Path, recipe: &str) -> anyhow::Result<()> {
+    let mut args: Vec<OsString> = Vec::new();
+    args.push(OsString::from("just"));
+    args.push(OsString::from("--working-directory"));
+    args.push(working_dir.as_os_str().to_os_string());
+    args.push(OsString::from("--justfile"));
+    args.push(justfile.as_os_str().to_os_string());
+    args.push(OsString::from(recipe));
+
+    just::run(args.into_iter()).map_err(|code| {
+        anyhow::anyhow!("just failed for {} with exit code {}", justfile.display(), code)
+    })
 }
 
 /// Splits an arbitrary name like "my-cool_app" or "MyCoolApp" into tokens: ["my","cool","app"]
