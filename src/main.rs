@@ -2,12 +2,10 @@
 //!
 //! Usage:
 //!   liscaf <new-project-name> [repo-url]
-//!   liscaf just <recipe>
 //!
 //! Templates can be selected from a repositories.txt list by providing a
 //! templates source (folder, repo, or http base URL).
 //!
-use std::ffi::OsString;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -31,8 +29,6 @@ struct Args {
 enum CliCommand {
     /// Scaffold a new project from a template repo
     Scaffold(ScaffoldArgs),
-    /// Run a just recipe in the current directory
-    Just(JustArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -61,24 +57,11 @@ struct ScaffoldArgs {
     into: Option<PathBuf>,
 }
 
-#[derive(Parser, Debug)]
-struct JustArgs {
-    /// Recipe to run
-    recipe: String,
-    /// Working directory to search for justfiles
-    #[arg(long = "path", value_name = "PATH")]
-    path: Option<PathBuf>,
-    /// Assume yes to prompts (non-interactive)
-    #[arg(short = 'y', long = "yes")]
-    yes: bool,
-}
-
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     match args.command {
         CliCommand::Scaffold(scaffold_args) => run_scaffold_command(scaffold_args)?,
-        CliCommand::Just(just_args) => run_just_command(just_args)?,
     }
 
     Ok(())
@@ -159,46 +142,6 @@ fn run_scaffold_command(args: ScaffoldArgs) -> anyhow::Result<()> {
     )?;
 
     Ok(())
-}
-
-fn run_just_command(args: JustArgs) -> anyhow::Result<()> {
-    let assume_yes = args.yes;
-    let root = match args.path {
-        Some(path) => path,
-        None => std::env::current_dir()?,
-    };
-
-    let mut justfiles = find_justfiles_in_root(&root)?;
-    if justfiles.is_empty() {
-        anyhow::bail!("No justfile found in {}", root.display());
-    }
-
-    let chosen = if justfiles.len() == 1 {
-        justfiles.remove(0)
-    } else if assume_yes {
-        justfiles.remove(0)
-    } else {
-        let options: Vec<String> = justfiles
-            .iter()
-            .map(|p| p.file_name().and_then(|s| s.to_str()).unwrap_or("justfile").to_string())
-            .collect();
-        let choice = Select::new("Choose a justfile:", options).prompt()?;
-        let idx = justfiles
-            .iter()
-            .position(|p| p.file_name().and_then(|s| s.to_str()) == Some(choice.as_str()))
-            .unwrap_or(0);
-        justfiles.remove(idx)
-    };
-
-    if !assume_yes {
-        let prompt = format!("Run just recipe '{}' from '{}' ?", args.recipe, chosen.display());
-        if !Confirm::new(&prompt).with_default(true).prompt()? {
-            println!("Aborted by user.");
-            return Ok(());
-        }
-    }
-
-    run_just_recipe(&chosen, &root, &args.recipe)
 }
 
 fn merge_into_dest(src: &Path, dest: &Path, dry_run: bool) -> anyhow::Result<()> {
@@ -433,7 +376,7 @@ fn run_scaffold(
             println!("Dry run: skipping merge write.");
         } else {
             println!("Merge finished");
-            run_justfiles_for_root(dest_dir, dry_run, assume_yes)?;
+            run_mise_task_for_root(dest_dir, dry_run, assume_yes)?;
         }
         return Ok(());
     }
@@ -477,7 +420,7 @@ fn run_scaffold(
             dest
         };
 
-        run_justfiles_for_root(&final_dest, dry_run, assume_yes)?;
+        run_mise_task_for_root(&final_dest, dry_run, assume_yes)?;
 
         println!("Scaffolding finished");
     }
@@ -659,103 +602,115 @@ fn parse_template_line(line: &str) -> (String, String) {
     (line.to_string(), line.to_string())
 }
 
-fn run_justfiles_for_root(
+fn run_mise_task_for_root(
     root: &Path,
     dry_run: bool,
     assume_yes: bool,
 ) -> anyhow::Result<()> {
     if dry_run {
-        println!("Dry run: skipping justfile execution.");
+        println!("Dry run: skipping mise task execution.");
         return Ok(());
     }
 
-    let justfiles = find_justfiles_in_root(root)?;
-    if justfiles.is_empty() {
+    if !mise_task_exists(root, "liscaf-merge")? {
         return Ok(());
     }
 
-    for justfile in justfiles {
-        if !justfile_has_recipe(&justfile, "liscaf-merge")? {
-            continue;
-        }
+    if assume_yes {
+        println!("Skipping mise task 'liscaf-merge' because confirmation is required");
+        return Ok(());
+    }
 
-        if assume_yes {
-            println!(
-                "Skipping justfile '{}' because confirmation is required",
-                justfile.display()
-            );
-            continue;
-        }
-
-        let prompt = format!(
-            "Run just recipe 'liscaf-merge' from '{}' ?",
-            justfile.display()
-        );
-        if Confirm::new(&prompt).with_default(false).prompt()? {
-            run_just_recipe(&justfile, root, "liscaf-merge")?;
-        }
+    let prompt = format!("Run mise task 'liscaf-merge' in '{}' ?", root.display());
+    if Confirm::new(&prompt).with_default(false).prompt()? {
+        run_mise_task(root, "liscaf-merge")?;
     }
 
     Ok(())
 }
 
-fn find_justfiles_in_root(root: &Path) -> anyhow::Result<Vec<PathBuf>> {
-    let mut files = Vec::new();
-    for entry in fs::read_dir(root)? {
-        let entry = entry?;
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let file_name = match path.file_name().and_then(|s| s.to_str()) {
-            Some(name) => name,
-            None => continue,
-        };
-        if file_name.starts_with("justfile") {
-            files.push(path);
+fn mise_task_exists(root: &Path, task: &str) -> anyhow::Result<bool> {
+    let json_output = Command::new("mise")
+        .arg("tasks")
+        .arg("--json")
+        .current_dir(root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output();
+
+    if let Ok(output) = json_output {
+        if output.status.success() {
+            if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                if mise_task_in_json(&value, task) {
+                    return Ok(true);
+                }
+            }
         }
     }
-    files.sort();
-    Ok(files)
-}
 
-fn justfile_has_recipe(path: &Path, recipe: &str) -> anyhow::Result<bool> {
-    let content = fs::read_to_string(path)?;
-    for line in content.lines() {
-        let mut trimmed = line.trim_start();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        if let Some(idx) = trimmed.find('#') {
-            trimmed = &trimmed[..idx];
-        }
-        if trimmed.contains(":=") {
-            continue;
-        }
-        if trimmed.starts_with(recipe) {
-            let rest = &trimmed[recipe.len()..];
-            if (rest.starts_with(':') || rest.starts_with(' ') || rest.starts_with('\t'))
-                && trimmed.contains(':')
-            {
+    let text_output = Command::new("mise")
+        .arg("tasks")
+        .current_dir(root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output();
+
+    if let Ok(output) = text_output {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if mise_task_in_text(&stdout, task) {
                 return Ok(true);
             }
         }
     }
+
     Ok(false)
 }
 
-fn run_just_recipe(justfile: &Path, working_dir: &Path, recipe: &str) -> anyhow::Result<()> {
-    let mut args: Vec<OsString> = Vec::new();
-    args.push(OsString::from("just"));
-    args.push(OsString::from("--working-directory"));
-    args.push(working_dir.as_os_str().to_os_string());
-    args.push(OsString::from("--justfile"));
-    args.push(justfile.as_os_str().to_os_string());
-    args.push(OsString::from(recipe));
+fn mise_task_in_json(value: &serde_json::Value, task: &str) -> bool {
+    match value {
+        serde_json::Value::Array(items) => items.iter().any(|item| match item {
+            serde_json::Value::String(name) => name == task,
+            serde_json::Value::Object(obj) => {
+                obj.get("name").and_then(|v| v.as_str()) == Some(task)
+                    || obj.get("task").and_then(|v| v.as_str()) == Some(task)
+            }
+            _ => false,
+        }),
+        serde_json::Value::Object(obj) => obj.values().any(|v| mise_task_in_json(v, task)),
+        _ => false,
+    }
+}
 
-    just::run(args.into_iter()).map_err(|code| {
-        anyhow::anyhow!("just failed for {} with exit code {}", justfile.display(), code)
-    })
+fn mise_task_in_text(output: &str, task: &str) -> bool {
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let trimmed = trimmed.trim_start_matches(&['*', '-', ' '][..]);
+        if trimmed == task
+            || trimmed.starts_with(&format!("{} ", task))
+            || trimmed.starts_with(&format!("{}:", task))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn run_mise_task(root: &Path, task: &str) -> anyhow::Result<()> {
+    let status = Command::new("mise")
+        .arg("run")
+        .arg(task)
+        .current_dir(root)
+        .status();
+
+    match status {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => anyhow::bail!("mise run {} failed with exit code {}", task, status.code().unwrap_or(-1)),
+        Err(err) => anyhow::bail!("Failed to run mise: {}", err),
+    }
 }
 
 /// Splits an arbitrary name like "my-cool_app" or "MyCoolApp" into tokens: ["my","cool","app"]
