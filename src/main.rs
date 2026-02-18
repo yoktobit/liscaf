@@ -29,6 +29,22 @@ struct Args {
 enum CliCommand {
     /// Scaffold a new project from a template repo
     Scaffold(ScaffoldArgs),
+    /// Replace template tokens in-place (content + paths)
+    Replace(ReplaceArgs),
+}
+
+#[derive(Parser, Debug)]
+struct ReplaceArgs {
+    /// Template sentence to replace (e.g. myOtherSentence)
+    from: String,
+    /// New sentence to substitute (e.g. newProjectSentence)
+    to: String,
+    /// Target directory (defaults to current directory)
+    #[arg(long = "path", value_name = "PATH")]
+    path: Option<PathBuf>,
+    /// If set, show planned changes but don't write files
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(Parser, Debug)]
@@ -62,7 +78,37 @@ fn main() -> anyhow::Result<()> {
 
     match args.command {
         CliCommand::Scaffold(scaffold_args) => run_scaffold_command(scaffold_args)?,
+        CliCommand::Replace(replace_args) => run_replace_command(replace_args)?,
     }
+
+    Ok(())
+}
+
+fn run_replace_command(args: ReplaceArgs) -> anyhow::Result<()> {
+    let base = match args.path {
+        Some(path) => path,
+        None => std::env::current_dir()?,
+    };
+
+    if !base.exists() {
+        anyhow::bail!("Target path does not exist: {}", base.display());
+    }
+    if !base.is_dir() {
+        anyhow::bail!("Target path is not a directory: {}", base.display());
+    }
+
+    let from_tokens = split_name_to_tokens(&args.from);
+    let to_tokens = split_name_to_tokens(&args.to);
+    let mappings = generate_variant_mappings(&from_tokens, &to_tokens);
+
+    println!("Replacing tokens in: {}", base.display());
+    println!("Generated {} variant mappings", mappings.len());
+    for (o, n) in &mappings {
+        println!("  {} -> {}", o, n);
+    }
+
+    replace_in_files(&base, &mappings, args.dry_run)?;
+    rename_paths(&base, &mappings, args.dry_run)?;
 
     Ok(())
 }

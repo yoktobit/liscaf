@@ -14,22 +14,22 @@ Build:
 cargo build --release
 ```
 
-Run (non-interactive):
+Run scaffold (non-interactive):
 
 ```bash
-cargo run -- <new-project-name> <repo-url>
+cargo run -- scaffold <new-project-name> <repo-url>
 ```
 
 Examples:
 
 ```bash
-cargo run -- my-cool-app https://github.com/owner/acme-app
+cargo run -- scaffold my-cool-app https://github.com/owner/acme-app
 ```
 
 Merge into an existing directory (adds new files, marks conflicts with git-style markers):
 
 ```bash
-cargo run -- my-cool-app https://github.com/owner/acme-app --into /path/to/existing/project
+cargo run -- scaffold my-cool-app https://github.com/owner/acme-app --into /path/to/existing/project
 ```
 
 Interactive prompts
@@ -41,7 +41,7 @@ Dry run
 Use `--dry-run` to preview replacements and renames without modifying files or initializing git:
 
 ```bash
-cargo run -- my-cool-app https://github.com/owner/acme-app --dry-run
+cargo run -- scaffold my-cool-app https://github.com/owner/acme-app --dry-run
 ```
 
 Non-interactive
@@ -49,7 +49,19 @@ Non-interactive
 Use `--yes` or `-y` to skip interactive confirmations and run non-interactively (requires `repo-url` provided):
 
 ```bash
-cargo run -- my-cool-app https://github.com/owner/acme-app --yes
+cargo run -- scaffold my-cool-app https://github.com/owner/acme-app --yes
+
+Replace tokens in an existing directory (content + paths):
+
+```bash
+cargo run -- replace myOtherSentence newProjectSentence
+```
+
+Optional path and dry run:
+
+```bash
+cargo run -- replace myOtherSentence newProjectSentence --path /path/to/target --dry-run
+```
 ```
 
 Notes
