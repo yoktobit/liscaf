@@ -577,7 +577,7 @@ fn load_repositories_from_http(base_url: &str) -> anyhow::Result<String> {
     let response = ureq::get(&url)
         .call()
         .map_err(|e| anyhow::anyhow!("HTTP error fetching {}: {}", url, e))?;
-    Ok(response.into_string()?)
+    Ok(response.into_body().read_to_string()?)
 }
 
 fn load_repositories_from_repo(repo_url: &str) -> anyhow::Result<String> {
