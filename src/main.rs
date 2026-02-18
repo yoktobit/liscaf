@@ -658,6 +658,21 @@ fn run_mise_task_for_root(
         return Ok(());
     }
 
+    // Trust the directory so mise can read task definitions
+    let trust_status = Command::new("mise")
+        .arg("trust")
+        .arg("--all")
+        .current_dir(root)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
+    if let Ok(status) = trust_status {
+        if status.success() {
+            println!("Trusted directory with mise");
+        }
+    }
+
     if !mise_task_exists(root, "liscaf-merge")? {
         return Ok(());
     }
@@ -668,7 +683,7 @@ fn run_mise_task_for_root(
     }
 
     let prompt = format!("Run mise task 'liscaf-merge' in '{}' ?", root.display());
-    if Confirm::new(&prompt).with_default(false).prompt()? {
+    if Confirm::new(&prompt).with_default(true).prompt()? {
         run_mise_task(root, "liscaf-merge")?;
     }
 
