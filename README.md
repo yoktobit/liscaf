@@ -1,5 +1,7 @@
 # liscaf — Lightweight scaffolder
 
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+
 liscaf clones a GitHub repository (HTTPS), replaces occurrences of a template name (e.g. `acme-app` in multiple case styles) with a new project name, renames files/dirs where necessary, and initializes a fresh git repository.
 
 Requirements
@@ -50,6 +52,7 @@ Use `--yes` or `-y` to skip interactive confirmations and run non-interactively 
 
 ```bash
 cargo run -- scaffold my-cool-app https://github.com/owner/acme-app --yes
+```
 
 Replace tokens in an existing directory (content + paths):
 
@@ -62,9 +65,12 @@ Optional path and dry run:
 ```bash
 cargo run -- replace myOtherSentence newProjectSentence --path /path/to/target --dry-run
 ```
-```
 
 Notes
 - The tool removes the cloned repository's `.git` directory to unlink from the original repository before making changes, and then initializes a new repo (unless `--dry-run` is used).
 - The tool performs simple textual replacements (heuristic: skips binary files).
 - When using `--into`, files are merged into the destination folder. If a file already exists and differs, a conflict is written using git-style markers. Binary conflicts are saved as a separate `.liscaf-incoming` file with a `.liscaf-conflict` note.
+
+License
+
+MIT. See [LICENSE](LICENSE).
