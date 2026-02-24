@@ -25,6 +25,7 @@ anyhow = "*"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+chrono = { version = "0.4", default-features = true }
 ureq = "3.2.0"
 similar = "2"
 

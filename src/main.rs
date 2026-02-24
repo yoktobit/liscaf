@@ -409,6 +409,9 @@ fn run_scaffold(
     // Rename paths
     rename_paths(&tmp_path, &mappings, dry_run)?;
 
+    // Write scaffold metadata
+    write_scaffold_metadata(&tmp_path, new_name, repo_url, template_base, dry_run)?;
+
     if let Some(dest_dir) = into_dir {
         if !dest_dir.exists() {
             anyhow::bail!("Destination directory does not exist: {}", dest_dir.display());
@@ -469,6 +472,34 @@ fn run_scaffold(
         run_mise_task_for_root(&final_dest, dry_run, assume_yes)?;
 
         println!("Scaffolding finished");
+    }
+
+    Ok(())
+}
+
+fn write_scaffold_metadata(
+    root: &Path,
+    project_name: &str,
+    template_repo_url: &str,
+    template_base: &str,
+    dry_run: bool,
+) -> anyhow::Result<()> {
+    let metadata_path = root.join(".scaffold.json");
+    let generated_at = chrono::Utc::now().to_rfc3339();
+    let metadata = serde_json::json!({
+        "project_name": project_name,
+        "template_repo_url": template_repo_url,
+        "template_base": template_base,
+        "generator": "liscaf",
+        "generated_at": generated_at
+    });
+
+    let content = serde_json::to_string_pretty(&metadata)?;
+    if dry_run {
+        println!("DRY ADD: {}", metadata_path.display());
+    } else {
+        fs::write(&metadata_path, content)?;
+        println!("ADD: {}", metadata_path.display());
     }
 
     Ok(())

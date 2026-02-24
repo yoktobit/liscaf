@@ -71,6 +71,22 @@ Notes
 - The tool performs simple textual replacements (heuristic: skips binary files).
 - When using `--into`, files are merged into the destination folder. If a file already exists and differs, a conflict is written using git-style markers. Binary conflicts are saved as a separate `.liscaf-incoming` file with a `.liscaf-conflict` note.
 
+Scaffold metadata
+
+Each scaffolded project includes a root `.scaffold.json` file with generation metadata:
+
+```json
+{
+	"project_name": "my-cool-app",
+	"template_repo_url": "https://github.com/owner/acme-app",
+	"template_base": "acme-app",
+	"generator": "liscaf",
+	"generated_at": "2026-02-24T12:34:56Z"
+}
+```
+
+`generated_at` is an ISO-8601 UTC timestamp.
+
 License
 
 MIT. See [LICENSE](LICENSE).
