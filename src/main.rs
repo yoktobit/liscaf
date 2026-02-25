@@ -3,7 +3,7 @@
 //! Usage:
 //!   liscaf <new-project-name> [repo-url]
 //!
-//! Templates can be selected from a repositories.txt list by providing a
+//! Templates can be selected from a repositories.yaml/.yml list by providing a
 //! templates source (folder, repo, or http base URL).
 //!
 use std::fs;
@@ -54,7 +54,7 @@ struct ScaffoldArgs {
 
     /// Git repo URL (HTTPS or SSH). Examples: https://github.com/owner/repo or git@github.com:owner/repo.git
     repo_url: Option<String>,
-    /// Templates source (folder with repositories.txt, git repo, or HTTP base URL)
+    /// Templates source (folder with repositories.yaml/.yml, git repo, or HTTP base URL)
     #[arg(
         long = "templates",
         env = "LISCAF_TEMPLATES",
@@ -523,6 +523,18 @@ struct TemplateEntry {
     url: String,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct TemplateYamlEntry {
+    name: Option<String>,
+    label: Option<String>,
+    url: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct TemplateYamlRoot {
+    repositories: Vec<TemplateYamlEntry>,
+}
+
 fn prompt_for_repo_url(templates_source: &str) -> anyhow::Result<String> {
     let templates = match load_template_entries(templates_source) {
         Ok(entries) => entries,
@@ -580,38 +592,58 @@ fn normalize_repo_url(repo_url: &str) -> String {
 
 fn load_template_entries(source: &str) -> anyhow::Result<Vec<TemplateEntry>> {
     let content = if source.starts_with("http://") || source.starts_with("https://") {
-        load_repositories_from_http(source)?
+        load_repositories_yaml_from_http(source)?
     } else if Path::new(source).exists() {
-        load_repositories_from_path(source)?
+        load_repositories_yaml_from_path(source)?
     } else {
         let repo_url = normalize_repo_url(source);
-        load_repositories_from_repo(&repo_url)?
+        load_repositories_yaml_from_repo(&repo_url)?
     };
 
-    Ok(parse_template_entries(&content))
+    parse_template_entries_from_yaml(&content)
 }
 
-fn load_repositories_from_path(path: &str) -> anyhow::Result<String> {
-    let repo_file = Path::new(path).join("repositories.txt");
-    if !repo_file.exists() {
-        anyhow::bail!("repositories.txt not found at {}", repo_file.display());
-    }
+fn load_repositories_yaml_from_path(path: &str) -> anyhow::Result<String> {
+    let yaml_path = Path::new(path).join("repositories.yaml");
+    let yml_path = Path::new(path).join("repositories.yml");
+    let repo_file = if yaml_path.exists() {
+        yaml_path
+    } else if yml_path.exists() {
+        yml_path
+    } else {
+        anyhow::bail!(
+            "Neither repositories.yaml nor repositories.yml found in {}",
+            path
+        );
+    };
     Ok(fs::read_to_string(repo_file)?)
 }
 
-fn load_repositories_from_http(base_url: &str) -> anyhow::Result<String> {
-    let mut url = base_url.to_string();
-    if !url.ends_with('/') {
-        url.push('/');
+fn load_repositories_yaml_from_http(base_url: &str) -> anyhow::Result<String> {
+    let mut yaml_url = base_url.to_string();
+    if !yaml_url.ends_with('/') {
+        yaml_url.push('/');
     }
-    url.push_str("repositories.txt");
-    let response = ureq::get(&url)
+    yaml_url.push_str("repositories.yaml");
+
+    match ureq::get(&yaml_url).call() {
+        Ok(response) => return Ok(response.into_body().read_to_string()?),
+        Err(_) => {}
+    }
+
+    let mut yml_url = base_url.to_string();
+    if !yml_url.ends_with('/') {
+        yml_url.push('/');
+    }
+    yml_url.push_str("repositories.yml");
+
+    let response = ureq::get(&yml_url)
         .call()
-        .map_err(|e| anyhow::anyhow!("HTTP error fetching {}: {}", url, e))?;
+        .map_err(|e| anyhow::anyhow!("HTTP error fetching {} or {}: {}", yaml_url, yml_url, e))?;
     Ok(response.into_body().read_to_string()?)
 }
 
-fn load_repositories_from_repo(repo_url: &str) -> anyhow::Result<String> {
+fn load_repositories_yaml_from_repo(repo_url: &str) -> anyhow::Result<String> {
     if !is_supported_repo_url(repo_url) {
         anyhow::bail!("Template source repo URL is not supported: {}", repo_url);
     }
@@ -634,10 +666,18 @@ fn load_repositories_from_repo(repo_url: &str) -> anyhow::Result<String> {
 
     match clone_status {
         Ok(status) if status.success() => {
-            let repo_file = tmp_path.join("repositories.txt");
-            if !repo_file.exists() {
-                anyhow::bail!("repositories.txt not found in template repo: {}", repo_url);
-            }
+            let yaml_path = tmp_path.join("repositories.yaml");
+            let yml_path = tmp_path.join("repositories.yml");
+            let repo_file = if yaml_path.exists() {
+                yaml_path
+            } else if yml_path.exists() {
+                yml_path
+            } else {
+                anyhow::bail!(
+                    "Neither repositories.yaml nor repositories.yml found in template repo: {}",
+                    repo_url
+                );
+            };
             Ok(fs::read_to_string(repo_file)?)
         }
         Ok(status) => anyhow::bail!("git clone failed with code: {}", status.code().unwrap_or(-1)),
@@ -645,38 +685,29 @@ fn load_repositories_from_repo(repo_url: &str) -> anyhow::Result<String> {
     }
 }
 
-fn parse_template_entries(content: &str) -> Vec<TemplateEntry> {
-    let mut entries = Vec::new();
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
+fn parse_template_entries_from_yaml(content: &str) -> anyhow::Result<Vec<TemplateEntry>> {
+    let entries_raw: Vec<TemplateYamlEntry> = match serde_yaml::from_str::<Vec<TemplateYamlEntry>>(content) {
+        Ok(list) => list,
+        Err(_) => {
+            let rooted = serde_yaml::from_str::<TemplateYamlRoot>(content)
+                .map_err(|e| anyhow::anyhow!("Failed to parse repositories YAML: {}", e))?;
+            rooted.repositories
         }
-        let (label, url) = parse_template_line(trimmed);
-        let url = normalize_repo_url(&url);
+    };
+
+    let mut entries = Vec::new();
+    for raw in entries_raw {
+        let label = raw
+            .name
+            .or(raw.label)
+            .unwrap_or_else(|| raw.url.clone());
+        let url = normalize_repo_url(&raw.url);
         if !url.is_empty() {
             entries.push(TemplateEntry { label, url });
         }
     }
-    entries
-}
 
-fn parse_template_line(line: &str) -> (String, String) {
-    if let Some((left, right)) = line.split_once('|') {
-        let label = left.trim();
-        let url = right.trim();
-        if !label.is_empty() && !url.is_empty() {
-            return (label.to_string(), url.to_string());
-        }
-    }
-    if let Some((left, right)) = line.split_once('=') {
-        let label = left.trim();
-        let url = right.trim();
-        if !label.is_empty() && !url.is_empty() {
-            return (label.to_string(), url.to_string());
-        }
-    }
-    (line.to_string(), line.to_string())
+    Ok(entries)
 }
 
 fn run_mise_task_for_root(

@@ -38,6 +38,24 @@ Interactive prompts
 
 If you pass values on the CLI the program will ask you to confirm and optionally edit them using interactive prompts.
 
+Template list format
+
+When using `--templates` with a folder/repo/HTTP base URL, liscaf reads `repositories.yaml` (or `repositories.yml`).
+Supported YAML formats:
+
+```yaml
+- name: "My Template"
+	url: "https://github.com/owner/repo"
+```
+
+or:
+
+```yaml
+repositories:
+	- name: "My Template"
+		url: "https://github.com/owner/repo"
+```
+
 Dry run
 
 Use `--dry-run` to preview replacements and renames without modifying files or initializing git:
