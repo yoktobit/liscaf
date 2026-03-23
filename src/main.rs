@@ -19,7 +19,7 @@ use walkdir::WalkDir;
 
 /// Simple scaffolder: clones a repo, replaces template tokens, and initializes a new git repo.
 #[derive(Parser, Debug)]
-#[command(name = "liscaf", about = "Simple scaffolder using inquire")]
+#[command(name = "liscaf", about = "Simple scaffolder using inquire", version)]
 struct Args {
     #[command(subcommand)]
     command: CliCommand,
