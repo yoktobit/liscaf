@@ -1,6 +1,6 @@
 [package]
 name = "liscaf"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = ["Your Name <you@example.com>"]
 description = "Terminal UI scaffolder using ratatui — downloads a GitHub repo and scaffolds a new project name with case conversions."

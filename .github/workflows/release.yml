@@ -21,12 +21,17 @@ jobs:
         include:
           - os: ubuntu-24.04
             label: linux
-            artifact_name: liscaf-x86_64-unknown-linux-gnu.tar.gz
+            target: x86_64-unknown-linux-musl
+            artifact_name: liscaf-x86_64-unknown-linux-musl.tar.gz
+
           - os: windows-2022
             label: windows
+            target: x86_64-pc-windows-msvc
             artifact_name: liscaf-x86_64-pc-windows-msvc.zip
+
           - os: macos-15-intel
             label: macos
+            target: x86_64-apple-darwin
             artifact_name: liscaf-x86_64-apple-darwin.tar.gz
 
     steps:
@@ -43,25 +48,36 @@ jobs:
             exit 1
           fi
 
-      - name: Install Rust toolchain
+      - name: Install Rust toolchain (with target)
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      # dtolnay/rust-toolchain unterstützt zusätzliche targets über "targets" [1](https://github.com/dtolnay/rust-toolchain)
+
+      - name: Install musl tools (Linux only)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y musl-tools
+      # musl-tools stellt musl-gcc bereit, häufig nötig für musl builds [2](https://rakhim.exotext.com/how-to-build-and-publish-multi-platform-rust-binaries)[3](https://blog.urth.org/2023/03/05/cross-compiling-rust-projects-in-github-actions/)[4](https://oneuptime.com/blog/post/2026-03-02-how-to-cross-compile-rust-applications-on-ubuntu/view)
 
       - name: Build release binary
-        run: cargo build --release --locked
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Package Unix artifact
         if: runner.os != 'Windows'
         shell: bash
         run: |
           mkdir -p dist
-          tar -C target/release -czf "dist/${{ matrix.artifact_name }}" liscaf
+          tar -C "target/${{ matrix.target }}/release" -czf "dist/${{ matrix.artifact_name }}" liscaf
 
       - name: Package Windows artifact
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Compress-Archive -Path target/release/liscaf.exe -DestinationPath "dist/${{ matrix.artifact_name }}"
+          Compress-Archive -Path "target/${{ matrix.target }}/release/liscaf.exe" -DestinationPath "dist/${{ matrix.artifact_name }}"
 
       - name: Upload packaged artifact
         uses: actions/upload-artifact@v5
